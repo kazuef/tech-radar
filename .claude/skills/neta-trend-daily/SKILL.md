@@ -51,27 +51,48 @@ description: "トレンドネタ収集"
     - AWS最新情報
     - 個人開発関連
 
-- **重要**: WebFetchツールはreddit.comをブロックするため、**Bashツールでcurlコマンドを使用**すること
-- 各サブレッドから `/hot.json?t=day&limit=10` で上位10件を取得
+- **重要**: WebFetchツールはreddit.comをブロックし、JSON API (`/hot.json`) も403を返すため、**RSS feedをBashツールで取得**すること
+- 各サブレッドから `/hot.rss?limit=10` でAtom RSSフィードを取得
 - **www.reddit.com**を使用
 - User-Agentヘッダーを設定: `"User-Agent: neta-trend-collector/1.0 (trend analysis tool)"`
-- 各記事の**タイトル、Redditコメントページの完全URL、投票数（ups）、コメント数**を取得
+- 各記事の**タイトル、Redditコメントページの完全URL**を取得（RSSにはups/コメント数が含まれないためN/A）
 - **タイトルは日本語に翻訳して出力**
+- **レート制限 (429) に注意**: サブレッド間は `time.sleep(15)` 以上の間隔を入れること。429が発生した場合は60秒以上待ってから再試行
 
 取得例（Bashツールで実行）:
 
 ```bash
-curl -s -H "User-Agent: neta-trend-collector/1.0 (trend analysis tool)" \
-  "https://www.reddit.com/r/programming/hot.json?t=day&limit=10" | \
-  jq -r '.data.children[] | "\(.data.title)|\(.data.ups)|\(.data.num_comments)|https://www.reddit.com\(.data.permalink)"'
+python3 -c "
+import urllib.request
+import xml.etree.ElementTree as ET
+import time
+
+ns = {'atom': 'http://www.w3.org/2005/Atom'}
+subreddits = ['artificial', 'OpenAI', 'LocalLLaMA', 'ClaudeCode', 'Python', 'aws', 'AZURE', 'programming', 'technology', 'opensource', 'webdev', 'web_design']
+
+for sub in subreddits:
+    url = f'https://www.reddit.com/r/{sub}/hot.rss?limit=10'
+    req = urllib.request.Request(url, headers={'User-Agent': 'neta-trend-collector/1.0 (trend analysis tool)'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            root = ET.fromstring(resp.read())
+            entries = root.findall('atom:entry', ns)
+            print(f'=== r/{sub} ({len(entries)} entries) ===')
+            for e in entries:
+                title = e.find('atom:title', ns).text
+                link = e.find('atom:link', ns).attrib.get('href', '')
+                print(f'{title}|{link}')
+    except Exception as ex:
+        print(f'r/{sub} FAIL: {ex}')
+    time.sleep(15)
+"
 ```
 
-データ構造:
+データ構造（Atom RSS形式）:
 
-- `data.children[].data.title`: タイトル
-- `data.children[].data.ups`: 投票数
-- `data.children[].data.num_comments`: コメント数
-- `data.children[].data.permalink`: パス（`https://www.reddit.com` + permalink で完全URL）
+- `atom:entry/atom:title`: タイトル
+- `atom:entry/atom:link[@href]`: RedditコメントページURL（完全URL）
+- ups/コメント数はRSSに含まれないためN/A表記
 
 AI系（4サブレッド）:
 
